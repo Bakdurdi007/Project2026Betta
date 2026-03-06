@@ -2,141 +2,96 @@
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Yo'l Belgilari</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Bot Camera</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; background-color: #2c3e50; color: white; margin: 0; padding: 20px; }
-        #video-container { position: relative; display: inline-block; margin-top: 20px; }
-        video { border: 3px solid #f1c40f; border-radius: 10px; max-width: 100%; height: auto; }
-        canvas { position: absolute; top: 0; left: 0; max-width: 100%; height: auto; }
-        #status { font-size: 20px; font-weight: bold; margin-top: 20px; color: #2ecc71; }
-        /* Boshlash tugmasi dizayni */
-        #startBtn { padding: 15px 30px; font-size: 20px; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; margin-top: 50px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        #startBtn:active { background-color: #c0392b; transform: translateY(2px); }
+        body { font-family: sans-serif; background: #000; color: #fff; text-align: center; margin: 0; overflow: hidden; }
+        video { width: 100vw; height: 100vh; object-fit: cover; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
+        #overlay { position: absolute; top: 20px; width: 100%; z-index: 10; }
+        #startBtn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 20px 40px; font-size: 18px; background: #248bcf; color: white;
+            border: none; border-radius: 50px; cursor: pointer; z-index: 20;
+        }
     </style>
 </head>
 <body>
 
-<h1>🚦 Yo'l belgilarini tanuvchi AI</h1>
+<button id="startBtn">IMTIHONNI BOSHLASH</button>
 
-<button id="startBtn">Kamera va Ovozni Yoqish</button>
-
-<div id="status" style="display: none;">AI yuklanmoqda... Iltimos kuting.</div>
-
-<div id="video-container" style="display: none;">
-    <video id="webcam" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
+<div id="overlay">
+    <div id="status">AI yuklanmoqda...</div>
 </div>
 
+<video id="webcam" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
 <script>
+    const tg = window.Telegram.WebApp;
+    tg.expand(); // Oynani to'liq ekranga ochish
+
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const statusText = document.getElementById('status');
     const startBtn = document.getElementById('startBtn');
-    const videoContainer = document.getElementById('video-container');
+    const statusText = document.getElementById('status');
 
     const belgilarBazasi = {
-        "stop sign": "Bu majburiy to'xtash belgisi. Chiziq oldida to'liq to'xtashingiz shart."
+        "stop sign": "Stop belgisi aniqlandi. To'liq to'xtash shart!"
     };
 
-    let isSpeaking = false;
-
-    // 1. Ovozli xabar berish
-    function gapirish(matn) {
-        if (isSpeaking) return;
-
-        isSpeaking = true;
-        const nutq = new SpeechSynthesisUtterance(matn);
-
-        // Telefoningiz o'zbek tilini tushunmasa ruscha yoki inglizcha aksentda o'qiydi
-        nutq.lang = 'uz-UZ';
-        nutq.rate = 0.85;
-
-        nutq.onend = () => {
-            setTimeout(() => { isSpeaking = false; }, 4000); // 4 soniya tanaffus
-        };
-        nutq.onerror = () => {
-            isSpeaking = false; // Xato bo'lsa qotib qolmasligi uchun
-        };
-
-        window.speechSynthesis.speak(nutq);
-    }
-
-    // 2. Kamerani ishga tushirish (ORQA KAMERA UCHUN)
-    async function setupCamera() {
+    async function init() {
         try {
+            // Telegramdan kameraga ruxsat so'rash (WebApp uchun)
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment" } // ORQA KAMERA
+                video: { facingMode: "environment" }
             });
             video.srcObject = stream;
 
-            return new Promise((resolve) => {
-                video.onloadedmetadata = () => {
-                    // Canvas o'lchamini videoga moslash
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    resolve(video);
-                };
-            });
-        } catch (error) {
-            statusText.innerText = "Kameraga ulanishda xatolik: " + error.message;
-            statusText.style.color = "red";
+            statusText.innerText = "Model yuklanmoqda...";
+            const model = await cocoSsd.load();
+            statusText.innerText = "AI Tayyor! Belgini ko'rsating.";
+
+            detect(model);
+        } catch (err) {
+            alert("Kamera xatosi: " + err.message);
         }
     }
 
-    // 3. AIni yuklash
-    async function runAI() {
-        const model = await cocoSsd.load();
-        statusText.innerText = "✅ AI tayyor! Kameraga STOP belgisini ko'rsating.";
-        statusText.style.color = "#2ecc71";
-
+    function detect(model) {
+        const ctx = canvas.getContext('2d');
         setInterval(async () => {
-            if (video.readyState === 4) { // Video to'liq yuklangan bo'lsa
-                const predictions = await model.detect(video);
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const predictions = await model.detect(video);
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                predictions.forEach(prediction => {
-                    const objName = prediction.class;
-                    const score = Math.round(prediction.score * 100);
+            predictions.forEach(p => {
+                if (p.class === "stop sign" && p.score > 0.5) {
+                    ctx.strokeStyle = "#00FF00";
+                    ctx.lineWidth = 5;
+                    ctx.strokeRect(...p.bbox);
 
-                    if (objName === "stop sign" && score > 50) {
-                        // To'rtburchak chizish
-                        ctx.beginPath();
-                        ctx.rect(...prediction.bbox);
-                        ctx.lineWidth = 4;
-                        ctx.strokeStyle = "#e74c3c";
-                        ctx.stroke();
-
-                        // Yozuvni chizish
-                        ctx.fillStyle = "#e74c3c";
-                        ctx.font = "24px Arial";
-                        ctx.fillText(`${objName} (${score}%)`, prediction.bbox[0], prediction.bbox[1] - 10);
-
-                        // Ovozli xabar berish
-                        if (belgilarBazasi[objName]) {
-                            gapirish(belgilarBazasi[objName]);
-                        }
-                    }
-                });
-            }
-        }, 300); // Tezlikni oshirdik (300 ms)
+                    // Ovoz chiqarish
+                    speak(belgilarBazasi[p.class]);
+                }
+            });
+        }, 500);
     }
 
-    // TUGMA BOSILGANDA ISHGA TUSHIRISH
-    startBtn.addEventListener('click', async () => {
-        // Brauzer ovoz chiqarish tizimini uyg'otish uchun bo'sh ovoz yuboramiz
-        const initSpeech = new SpeechSynthesisUtterance('');
-        window.speechSynthesis.speak(initSpeech);
+    function speak(text) {
+        if (window.speechSynthesis.speaking) return;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'uz-UZ';
+        window.speechSynthesis.speak(utterance);
+    }
 
-        startBtn.style.display = 'none'; // Tugmani yashirish
-        statusText.style.display = 'block';
-        videoContainer.style.display = 'inline-block';
-
-        await setupCamera();
-        runAI();
+    startBtn.addEventListener('click', () => {
+        startBtn.style.display = 'none';
+        init();
     });
 </script>
 </body>
