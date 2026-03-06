@@ -2,53 +2,123 @@
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Road Sign - Pro Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AI Avtodrom Fix</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
-        #app { width: 100vw; height: 100vh; position: relative; }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        #info-box { position: absolute; bottom: 20px; left: 10px; right: 10px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; border-left: 5px solid #2ecc71; display: none; z-index: 100; }
-        #startBtn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; background: #3498db; color: white; border: none; border-radius: 50px; font-weight: bold; z-index: 200; }
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; text-align: center; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; background: #111; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; left:0; top:0; }
+        canvas { position: absolute; width: 100%; height: 100%; z-index: 2; left:0; top:0; pointer-events: none; }
+        #ui { position: absolute; top: 10px; width: 100%; z-index: 10; pointer-events: none; }
+        #status { background: rgba(0,255,0,0.3); padding: 5px 15px; border-radius: 20px; font-size: 16px; color: #0f0; border: 1px solid #0f0; }
+        #startBtn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px 40px; font-size: 20px; border-radius: 50px; border: none; background: #248bcf; color: white; font-weight: bold; cursor: pointer; }
+        #debug { position: absolute; bottom: 20px; left: 10px; right: 10px; font-size: 12px; color: #ff4444; z-index: 100; text-align: left; background: rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
 
 <button id="startBtn">IMTIHONNI BOSHLASH</button>
 
-<div id="app">
-    <div id="info-box">
-        <b id="sign-name" style="color: #2ecc71; font-size: 18px;"></b><br>
-        <span id="sign-desc" style="font-size: 14px;"></span>
-    </div>
+<div id="ui">
+    <span id="status">Kamera kutilmoqda...</span>
+</div>
+
+<div id="container">
     <video id="webcam" autoplay muted playsinline></video>
     <canvas id="canvas"></canvas>
 </div>
 
-<script>
-    const video = document.getElementById('webcam');
-    const infoBox = document.getElementById('info-box');
-    const signName = document.getElementById('sign-name');
-    const signDesc = document.getElementById('sign-desc');
-    let belgilarData = [];
+<div id="debug">Diagnostika: Tayyor.</div>
 
-    // 1. JSON FAYLDAN MA'LUMOTLARNI YUKLASH
-    async function loadSignDatabase() {
+<script>
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const startBtn = document.getElementById('startBtn');
+    const status = document.getElementById('status');
+    const debug = document.getElementById('debug');
+    const ctx = canvas.getContext('2d');
+
+    const belgilar = { "stop sign": "Stop belgisi! To'xtashingiz shart." };
+
+    function log(msg) {
+        debug.innerText += "\n> " + msg;
+        console.log(msg);
+    }
+
+    async function startCamera() {
+        log("Kameraga so'rov yuborilmoqda...");
+
+        // Orqa kamerani ochish uchun eng xavfsiz sozlamalar
+        const constraints = {
+            video: {
+                facingMode: "environment", // 'exact' olib tashlandi - xavfsizroq
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            },
+            audio: false
+        };
+
         try {
-            // Siz yuborgan data.json faylini shu yerda chaqiramiz
-            const response = await fetch('data.json');
-            belgilarData = await response.json();
-            console.log("Baza yuklandi: " + belgilarData.length + " ta belgi bor.");
-        } catch (e) {
-            console.error("JSON yuklashda xato:", e);
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+            log("Kamera oqimi olindi.");
+
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    log("Video o'ynashni boshladi.");
+                    video.play();
+                    resolve();
+                };
+            });
+        } catch (err) {
+            log("XATO: " + err.name + " - " + err.message);
+
+            // Agar orqa kamera ochilmasa, ixtiyoriy kamerani ochishga urinish
+            log("Ixtiyoriy kameraga urinib ko'ramiz...");
+            const simpleStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = simpleStream;
+            video.play();
         }
     }
 
-    // 2. OVOZ CHIQARISH
+    async function runAI() {
+        status.innerText = "Sun'iy intellekt yuklanmoqda...";
+        log("AI model yuklanmoqda...");
+        try {
+            const model = await cocoSsd.load();
+            log("AI model yuklandi.");
+            status.innerText = "AI TAYYOR ✅";
+            status.style.background = "rgba(0,255,0,0.6)";
+
+            setInterval(async () => {
+                if (video.readyState === 4) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+
+                    const predictions = await model.detect(video);
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    predictions.forEach(p => {
+                        if (p.class === "stop sign" && p.score > 0.5) {
+                            ctx.strokeStyle = "#ff0000";
+                            ctx.lineWidth = 10;
+                            ctx.strokeRect(...p.bbox);
+                            speak(belgilar[p.class]);
+                        }
+                    });
+                }
+            }, 500);
+        } catch (e) {
+            log("AI XATOSI: " + e.message);
+        }
+    }
+
     function speak(text) {
         if (window.speechSynthesis.speaking) return;
         const msg = new SpeechSynthesisUtterance(text);
@@ -56,43 +126,19 @@
         window.speechSynthesis.speak(msg);
     }
 
-    // 3. AI DETEKSIYA VA BAZADAN QIDIRISH
-    async function startAI() {
-        const model = await cocoSsd.load();
+    startBtn.addEventListener('click', async () => {
+        startBtn.style.display = 'none';
+        log("Boshlash tugmasi bosildi.");
 
-        setInterval(async () => {
-            const predictions = await model.detect(video);
-            if (predictions.length > 0) {
-                const found = predictions[0];
+        // Ovozni 'uyg'otish'
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
 
-                // COCO-SSD hozircha faqat 'stop sign'ni taniydi.
-                // Biz uni sizning JSONingizdagi "To'xtash" belgisi bilan bog'laymiz.
-                if (found.class === "stop sign") {
-                    // JSON ichidan 2.5 yoki "stop" so'zi bor belgi qidiramiz
-                    const belgi = belgilarData.find(b => b.nomi.toLowerCase().includes("to'xtash") || b.raqam_belgisi === "2.5");
-
-                    if (belgi) {
-                        infoBox.style.display = "block";
-                        signName.innerText = belgi.nomi;
-                        signDesc.innerText = belgi.izoh || "Bu belgi harakatni tartibga soladi.";
-                        speak(belgi.nomi + ". " + signDesc.innerText);
-                    }
-                }
-            }
-        }, 800);
-    }
-
-    // KAMERANI YOQISH uchun
-    async function init() {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = stream;
-        await loadSignDatabase();
-        startAI();
-    }
-
-    document.getElementById('startBtn').addEventListener('click', function() {
-        this.style.display = 'none';
-        init();
+        try {
+            await startCamera();
+            await runAI();
+        } catch (err) {
+            log("Global xatolik: " + err.message);
+        }
     });
 </script>
 </body>
