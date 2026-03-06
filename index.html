@@ -3,170 +3,96 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Avtodrom — O'quv Dasturi</title>
-
+    <title>AI Road Sign - Pro Edition</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
-        #app { position: relative; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
-
-        video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-        canvas { position: absolute; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
-
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
-        #status-bar { margin-top: 20px; background: rgba(0,0,0,0.7); padding: 8px 20px; border-radius: 30px; border: 1px solid #2ecc71; color: #2ecc71; font-weight: bold; font-size: 14px; }
-
-        #start-screen { position: absolute; z-index: 100; width: 100%; height: 100%; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        #startBtn { padding: 18px 45px; font-size: 20px; border-radius: 50px; border: none; background: #248bcf; color: white; font-weight: bold; cursor: pointer; box-shadow: 0 5px 20px rgba(36,139,207,0.4); pointer-events: auto; }
-
-        #debug-console { position: absolute; bottom: 10px; left: 10px; right: 10px; font-size: 10px; color: #ff4444; background: rgba(0,0,0,0.5); max-height: 60px; overflow: hidden; pointer-events: none; }
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
+        #app { width: 100vw; height: 100vh; position: relative; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #info-box { position: absolute; bottom: 20px; left: 10px; right: 10px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 15px; border-left: 5px solid #2ecc71; display: none; z-index: 100; }
+        #startBtn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; background: #3498db; color: white; border: none; border-radius: 50px; font-weight: bold; z-index: 200; }
     </style>
 </head>
 <body>
 
-<div id="start-screen">
-    <h2 style="margin-bottom: 30px;">AI Imtihon Tizimi</h2>
-    <button id="startBtn">IMTIHONNI BOSHLASH</button>
-    <p style="font-size: 12px; color: #666; margin-top: 20px;">Kamera va ovozdan foydalanishga ruxsat bering</p>
-</div>
+<button id="startBtn">IMTIHONNI BOSHLASH</button>
 
 <div id="app">
-    <div id="ui-layer">
-        <div id="status-bar">Tizim kutilmoqda...</div>
+    <div id="info-box">
+        <b id="sign-name" style="color: #2ecc71; font-size: 18px;"></b><br>
+        <span id="sign-desc" style="font-size: 14px;"></span>
     </div>
-
     <video id="webcam" autoplay muted playsinline></video>
     <canvas id="canvas"></canvas>
-    <div id="debug-console">Diagnostika yuklanmoqda...</div>
 </div>
 
 <script>
-    const tg = window.Telegram.WebApp;
-    tg.expand();
-
     const video = document.getElementById('webcam');
-    const canvas = document.getElementById('canvas');
-    const status = document.getElementById('status-bar');
-    const debug = document.getElementById('debug-console');
-    const startBtn = document.getElementById('startBtn');
-    const startScreen = document.getElementById('start-screen');
-    const ctx = canvas.getContext('2d');
+    const infoBox = document.getElementById('info-box');
+    const signName = document.getElementById('sign-name');
+    const signDesc = document.getElementById('sign-desc');
+    let belgilarData = [];
 
-    // Siz yuborgan fayldan olingan rasmiy ma'lumotlar bazasi
-    const belgilarBazasi = {
-        "stop sign": "Toʻxtash — transport vositasi harakatini 10 daqiqagacha boʻlgan muddatga toʻxtatish (harakatsiz holatga keltirish).",
-        "person": "Piyoda — transport vositasidan tashqarida boʻlgan va yoʻlda biror-bir yumush bilan band boʻlmagan shaxs.",
-        "bicycle": "Velosiped — kamida ikkita gʻildirakka ega boʻlgan va odatda minib olgan shaxs(lar)ning muskul kuchi bilan harakatlantiriladigan transport vositasi.",
-        "bus": "Yoʻnalishli transport vositasi — belgilangan yoʻnalishi va bekatlari boʻlgan, yoʻlovchi tashish uchun moʻljallangan umumiy foydalanishdagi transport vositalari.",
-        "motorcycle": "Mototsikl — dvigatelining ish hajmi 50 sm3 va undan oshadigan, konstruktiv tezligi soatiga 50 kilometr va undan oshadigan transport vositasi.",
-        "truck": "Avtopoyezd — ulagich moslamalari bilan ulangan egarli shatakka oluvchi va yarim tirkama yoki yuk avtomobili tarkibi.",
-        "car": "Mexanik transport vositasi — dvigatel bilan harakatga keltiriladigan transport vositasi."
-    };
-
-    function log(msg) {
-        debug.innerText += "\n> " + msg;
-        console.log(msg);
-    }
-
-    // 1. Kamerani ishga tushirish
-    async function startCamera() {
-        log("Kamera so'ralmoqda...");
+    // 1. JSON FAYLDAN MA'LUMOTLARNI YUKLASH
+    async function loadSignDatabase() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment" },
-                audio: false
-            });
-            video.srcObject = stream;
-            return new Promise(resolve => {
-                video.onloadedmetadata = () => {
-                    log("Kamera ulandi.");
-                    video.play();
-                    resolve();
-                };
-            });
-        } catch (err) {
-            log("Xato: " + err.name);
-            // Zaxira: ixtiyoriy kamera
-            const fallback = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = fallback;
-            video.play();
+            // Siz yuborgan data.json faylini shu yerda chaqiramiz
+            const response = await fetch('data.json');
+            belgilarData = await response.json();
+            console.log("Baza yuklandi: " + belgilarData.length + " ta belgi bor.");
+        } catch (e) {
+            console.error("JSON yuklashda xato:", e);
         }
     }
 
-    // 2. Ovozli tizim
-    let lastDetected = "";
-    let isSpeaking = false;
-
+    // 2. OVOZ CHIQARISH
     function speak(text) {
-        if (isSpeaking || lastDetected === text) return;
-
-        isSpeaking = true;
-        lastDetected = text;
+        if (window.speechSynthesis.speaking) return;
         const msg = new SpeechSynthesisUtterance(text);
         msg.lang = 'uz-UZ';
-
-        msg.onend = () => {
-            setTimeout(() => {
-                isSpeaking = false;
-                lastDetected = ""; // Qayta gapirishi uchun
-            }, 5000);
-        };
         window.speechSynthesis.speak(msg);
     }
 
-    // 3. AI Analiz
-    async function runAI() {
-        status.innerText = "Model yuklanmoqda...";
+    // 3. AI DETEKSIYA VA BAZADAN QIDIRISH
+    async function startAI() {
         const model = await cocoSsd.load();
-        status.innerText = "Tizim Tayyor ✅";
-        status.style.borderColor = "#2ecc71";
-        log("AI yuklandi.");
 
         setInterval(async () => {
-            if (video.readyState === 4) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
+            const predictions = await model.detect(video);
+            if (predictions.length > 0) {
+                const found = predictions[0];
 
-                const predictions = await model.detect(video);
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // COCO-SSD hozircha faqat 'stop sign'ni taniydi.
+                // Biz uni sizning JSONingizdagi "To'xtash" belgisi bilan bog'laymiz.
+                if (found.class === "stop sign") {
+                    // JSON ichidan 2.5 yoki "stop" so'zi bor belgi qidiramiz
+                    const belgi = belgilarData.find(b => b.nomi.toLowerCase().includes("to'xtash") || b.raqam_belgisi === "2.5");
 
-                predictions.forEach(p => {
-                    const objectName = p.class;
-                    if (belgilarBazasi[objectName] && p.score > 0.5) {
-                        // Chizish
-                        ctx.strokeStyle = "#2ecc71";
-                        ctx.lineWidth = 4;
-                        ctx.strokeRect(...p.bbox);
-
-                        ctx.fillStyle = "#2ecc71";
-                        ctx.font = "bold 20px Arial";
-                        ctx.fillText(objectName.toUpperCase(), p.bbox[0], p.bbox[1] - 10);
-
-                        // Ovozli tushuntirish
-                        speak(belgilarBazasi[objectName]);
+                    if (belgi) {
+                        infoBox.style.display = "block";
+                        signName.innerText = belgi.nomi;
+                        signDesc.innerText = belgi.izoh || "Bu belgi harakatni tartibga soladi.";
+                        speak(belgi.nomi + ". " + signDesc.innerText);
                     }
-                });
+                }
             }
-        }, 600);
+        }, 800);
     }
 
-    // 4. Boshlash tugmasi
-    startBtn.addEventListener('click', async () => {
-        startScreen.style.display = 'none';
-        log("Dastur boshlandi.");
+    // KAMERANI YOQISH
+    async function init() {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream;
+        await loadSignDatabase();
+        startAI();
+    }
 
-        // Ovozni 'uyg'otish' (Mobil brauzerlar uchun)
-        window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
-
-        try {
-            await startCamera();
-            await runAI();
-        } catch (e) {
-            log("Global xato: " + e.message);
-        }
+    document.getElementById('startBtn').addEventListener('click', function() {
+        this.style.display = 'none';
+        init();
     });
 </script>
 </body>
